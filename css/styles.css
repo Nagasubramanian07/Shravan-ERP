@@ -41,3 +41,13 @@ td.r,th.r{text-align:right}
 .empty{padding:18px;color:var(--mut)}
 .msg{color:var(--bad);margin:8px 0 0;min-height:18px}
 @media (max-width:720px){.app{flex-direction:column}nav{width:100%;display:flex;overflow-x:auto;padding:0}nav h1,.nsec{display:none}nav a{border-left:0;border-bottom:4px solid transparent;white-space:nowrap}nav a.on{border-bottom-color:var(--acc)}}
+
+[hidden]{display:none!important}
+.boot{padding:40px;text-align:center;color:var(--mut)}
+.login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.login-box{background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:28px;width:100%;max-width:340px;display:grid;gap:12px}
+.login-box h1{margin:0;font-size:22px}
+.login-box p{margin:0;color:var(--mut)}
+.login-box label{display:grid;gap:4px;color:var(--mut);font-size:12px}
+.meta{color:var(--mut);font-size:12px;margin-right:8px}
+@media print{nav,header,button,.login{display:none!important}.app{display:block}section{overflow:visible}}

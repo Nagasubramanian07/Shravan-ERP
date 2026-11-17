@@ -6,8 +6,14 @@ A web ERP inspired by SAP Business One. The front end is plain HTML, CSS and Jav
 
 **Master data:** business partners (GSTIN, PAN, addresses, payment terms, bank details), items (HSN/SAC, GST rate, valuation, stock by warehouse), HSN/SAC master, currency master (all documents in INR).
 
-**Sales flow:** quotation, order, delivery, A/R invoice, incoming payment.
-**Purchase flow:** purchase order, goods receipt PO, A/P invoice, outgoing payment.
+**Sales (A/R), same document chain as SAP Business One:** sales quotation, sales order, delivery, return, A/R invoice, A/R credit memo, incoming payment.
+**Purchasing (A/P):** purchase order, goods receipt PO, goods return, A/P invoice, A/P credit memo, outgoing payment.
+- Multi-line documents with a warehouse, quantity, unit price, discount and GST on every line
+- Copy To: each document is created from the previous one, with partial quantities. The open quantity on the base document falls and it closes when nothing is left
+- GST: CGST and SGST when the partner is in the company's state, IGST otherwise. The rate comes from the item's HSN/SAC code
+- Each document posts its own journal entry. A direct invoice also moves stock
+- Cancel a document: its journal entries and stock are reversed and the base document's open quantity is restored
+- Payments are applied to specific invoices and credit memos, with part payments
 **Inventory:** goods receipt, goods issue, inventory transfer, warehouses, stock adjustments, movement log.
 
 **Finance:** chart of accounts, account determination, automatic journal entries for every posting step, manual journal entries, trial balance, profit and loss, balance sheet.
@@ -19,7 +25,7 @@ A web ERP inspired by SAP Business One. The front end is plain HTML, CSS and Jav
 ## Architecture
 
 ```
-index.html, css/, js/app.js     the app that runs in the browser
+index.html, css/, js/app.js, js/docs.js     the app that runs in the browser
 api/login.js                    sign in, sets a signed HttpOnly session cookie
 api/logout.js                   sign out
 api/me.js                       who is signed in
@@ -71,7 +77,8 @@ Create a `.env` file from `.env.example`. Do not commit it.
 - The whole data set is one JSON document. Vercel limits a request to about 4.5 MB, so very large data needs proper tables.
 - No login rate limiting beyond a short delay on a wrong password.
 - Reset demo data (admin only) replaces the shared data for every user with the sample data.
-- Each sales or purchase document holds one item. GST is stored but not yet calculated on documents. No cancellation or reversal of posted documents, credit notes, returns or banking.
+- Purchase requests and purchase quotations, A/R down payments, price lists, batches and serial numbers, inventory counting and transfer requests are not built yet.
+- Banking and bank reconciliation are not built.
 
 ## Next steps
 
