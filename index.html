@@ -7,7 +7,18 @@
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-<div class="app">
+<p id="boot" class="boot">Loading...</p>
+<div id="login" class="login" hidden>
+  <form id="lform" class="login-box">
+    <h1>Shravan ERP</h1>
+    <p>Sign in to continue.</p>
+    <label>Username<input name="username" autocomplete="username" required></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+    <button class="p">Sign in</button>
+    <p id="lerr" class="msg" role="alert"></p>
+  </form>
+</div>
+<div class="app" id="app" hidden>
 <nav id="nav">
   <h1>Shravan ERP</h1>
   <a href="#dashboard" data-r="dashboard">Dashboard</a>
@@ -35,6 +46,7 @@
   <a href="#bs" data-r="bs">Balance sheet</a>
   <div class="nsec">Administration</div>
   <a href="#series" data-r="series">Document numbering</a>
+  <a href="#users" data-r="users">Users</a>
   <div class="nsec">Master data</div>
   <a href="#partners" data-r="partners">Business partner master data</a>
   <a href="#items" data-r="items">Item master data</a>
@@ -42,7 +54,7 @@
   <a href="#cur" data-r="cur">Currency master</a>
 </nav>
 <div class="main">
-  <header><h2 id="title"></h2><div><button id="reset">Reset demo data</button> <button id="theme">Theme</button></div></header>
+  <header><h2 id="title"></h2><div><span id="sync" class="meta"></span> <span id="who" class="meta"></span> <button id="reset">Reset demo data</button> <button id="theme">Theme</button> <button id="logout">Log out</button></div></header>
   <section id="view"></section>
 </div>
 </div>

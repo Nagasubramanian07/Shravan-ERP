@@ -1,65 +1,80 @@
 # Shravan ERP
 
-A browser-based ERP inspired by SAP Business One. It runs entirely in the browser with plain HTML, CSS and JavaScript. There is no server and no build step. All data is saved in the browser's localStorage.
+A web ERP inspired by SAP Business One. The front end is plain HTML, CSS and JavaScript. The back end is a set of Vercel serverless functions that store the data in a Neon Postgres database and protect it with a login.
 
 ## What it does
 
-**Master data**
-- Business partners (customers, suppliers, leads) with GSTIN, PAN, addresses, payment terms and bank details
-- Items with HSN/SAC code, GST rate, valuation method, prices, default warehouse and stock by warehouse
-- HSN / SAC code master
-- Currency master (all documents are shown in INR)
+**Master data:** business partners (GSTIN, PAN, addresses, payment terms, bank details), items (HSN/SAC, GST rate, valuation, stock by warehouse), HSN/SAC master, currency master (all documents in INR).
 
-**Sales flow:** quotation, order, delivery, A/R invoice, incoming payment
-**Purchase flow:** purchase order, goods receipt PO, A/P invoice, outgoing payment
-**Inventory:** goods receipt, goods issue, inventory transfer, warehouses, stock adjustments, movement log
+**Sales flow:** quotation, order, delivery, A/R invoice, incoming payment.
+**Purchase flow:** purchase order, goods receipt PO, A/P invoice, outgoing payment.
+**Inventory:** goods receipt, goods issue, inventory transfer, warehouses, stock adjustments, movement log.
 
-**Finance**
-- Chart of accounts and account determination (which GL account each step posts to)
-- Automatic journal entries for every posting step, plus manual journal entries
-- Trial balance, profit and loss, balance sheet
+**Finance:** chart of accounts, account determination, automatic journal entries for every posting step, manual journal entries, trial balance, profit and loss, balance sheet.
 
-**Traceability**
-- A unique document number for every document, for example QT-1003, DL-3001, AR-4001, GR-7001, JE-12
-- Document list with a details screen for every document
-- Journal entry list showing which document each entry was posted against
+**Traceability:** a unique document number for every document (QT-, SO-, DL-, AR-, IP-, PO-, GP-, AI-, OP-, GR-, GI-, TR-, JE-, FT-), a document list with a details screen, and a journal entry list showing which document each entry was posted against.
+
+**Shared data and login:** all users see the same data. Sign in with a username and password. An admin can add users and reset passwords.
+
+## Architecture
+
+```
+index.html, css/, js/app.js     the app that runs in the browser
+api/login.js                    sign in, sets a signed HttpOnly session cookie
+api/logout.js                   sign out
+api/me.js                       who is signed in
+api/db.js                       load and save the shared data (versioned)
+api/users.js                    admin: list users, add a user, reset a password
+lib/auth.js                     password hashing (scrypt) and session signing
+lib/db.js                       Neon connection, creates tables on first use
+sql/schema.sql                  the two tables, for reference
+```
+
+The browser never sees DATABASE_URL. Only the serverless functions use it.
+
+## Environment variables (Vercel, Project Settings, Environment Variables)
+
+| Name | Purpose |
+|---|---|
+| `DATABASE_URL` | Neon connection string |
+| `SESSION_SECRET` | random string, 32 or more characters, used to sign login cookies |
+| `ADMIN_PASSWORD` | password for the first user, `admin`, created when the users table is empty |
+
+Generate a secret with `openssl rand -base64 32`. After changing environment variables, redeploy.
+
+## First run
+
+1. Push these files to GitHub. Vercel deploys automatically.
+2. Open the site and sign in as `admin` with your `ADMIN_PASSWORD`.
+3. On the first load the app saves the sample data to the database.
+4. Open Administration, then Users, to change the admin password and add your team. Saving an existing username resets its password.
+
+The tables are created automatically. You do not need to run any SQL.
+
+## How saving works
+
+The whole data set is stored as one JSON document with a version number. Every save sends the version it last loaded. If another user saved first, the server refuses the save and the app reloads the latest data, so nothing is silently overwritten. The header shows Saving, Saved or a warning.
 
 ## Run locally
 
-Open `index.html` in a browser. Or serve the folder:
-
 ```
-python3 -m http.server 8000
+npm install
+npx vercel dev
 ```
 
-Then visit http://localhost:8000.
-
-## Deploy with GitHub Pages
-
-1. Create a new repository on GitHub and push these files to the `main` branch.
-2. In the repository go to Settings, then Pages, and set Source to **GitHub Actions**.
-3. Push to `main`. The workflow in `.github/workflows/pages.yml` publishes the site.
-
-## Project structure
-
-```
-index.html            page shell and left menu
-css/styles.css        styles (light and dark mode)
-js/app.js             application logic, data and screens
-.github/workflows/    GitHub Pages deployment
-```
+Create a `.env` file from `.env.example`. Do not commit it.
 
 ## Known limitations
 
-- Data lives in one browser only. Clearing site data erases it. There are no user logins and no shared database.
-- Each sales or purchase document holds one item.
-- GST rates are stored in the HSN/SAC master but not yet applied to document tax calculation (no CGST, SGST or IGST).
-- Cancelling or reversing a posted document, credit notes and returns are not built.
-- Banking and bank reconciliation are not built.
-- Exchange rates are for reference only. There is no foreign currency posting.
+- Roles are only admin and user. There are no per-module permissions yet.
+- If two people edit at the same time, the second person's change is dropped and their screen reloads. They must enter it again. Row-level tables would remove this.
+- The whole data set is one JSON document. Vercel limits a request to about 4.5 MB, so very large data needs proper tables.
+- No login rate limiting beyond a short delay on a wrong password.
+- Reset demo data (admin only) replaces the shared data for every user with the sample data.
+- Each sales or purchase document holds one item. GST is stored but not yet calculated on documents. No cancellation or reversal of posted documents, credit notes, returns or banking.
 
 ## Next steps
 
-1. Multi-line documents with GST (CGST, SGST, IGST), returns and credit notes
-2. Banking and reconciliation
-3. A backend database with user logins and permissions, so a team can share data
+1. Move from one JSON document to real tables (partners, items, documents, journal entries) so edits do not collide and reports can use SQL.
+2. Multi-line documents with GST (CGST, SGST, IGST), returns and credit notes.
+3. Per-module permissions, an audit log, banking and reconciliation.
