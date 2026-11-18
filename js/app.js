@@ -366,7 +366,7 @@ function push(){if(busy){again=true;return}busy=true;
   setSync('Not saved. Check your connection.')}).catch(function(){busy=false;setSync('Not saved. Check your connection.')})}
 function showLogin(t){$('app').hidden=true;$('boot').hidden=true;$('login').hidden=false;$('lerr').textContent=t||''}
 function start(r){window.__initial=r.j.data;ver=r.j.version;load();$('login').hidden=true;$('boot').hidden=true;$('app').hidden=false;if(!r.j.data)save();route();if(r.j.data)setSync('Saved')}
-function boot(){api('/api/me').then(function(r){if(!r.ok){showLogin();return}me=r.j;$('who').textContent=me.user+' ('+me.role+')';$('reset').hidden=me.role!=='admin';
+function boot(){api('/api/me').then(function(r){if(!r.ok){showLogin();return}me=r.j;$('who').textContent=me.open?'':me.user+' ('+me.role+')';$('logout').hidden=!!me.open;$('reset').hidden=me.role!=='admin';
  return api('/api/db').then(function(d){if(!d.ok){showLogin(d.j.error);return}start(d)})}).catch(function(){showLogin('Cannot reach the server. Check your connection.')})}
 $('lform').addEventListener('submit',function(e){e.preventDefault();var f=e.target;$('lerr').textContent='';
  api('/api/login',{method:'POST',body:JSON.stringify({username:f.username.value,password:f.password.value})}).then(function(r){if(r.ok){f.password.value='';boot()}else $('lerr').textContent=r.j.error||'Login failed.'})});

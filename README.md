@@ -20,7 +20,7 @@ A web ERP inspired by SAP Business One. The front end is plain HTML, CSS and Jav
 
 **Traceability:** a unique document number for every document (QT-, SO-, DL-, AR-, IP-, PO-, GP-, AI-, OP-, GR-, GI-, TR-, JE-, FT-), a document list with a details screen, and a journal entry list showing which document each entry was posted against.
 
-**Shared data and login:** all users see the same data. Sign in with a username and password. An admin can add users and reset passwords.
+**Shared data:** everyone who opens the site sees the same data. By default the app opens directly with no login. Set `REQUIRE_LOGIN=true` to require a username and password, with an admin who can add users.
 
 ## Architecture
 
@@ -42,11 +42,16 @@ The browser never sees DATABASE_URL. Only the serverless functions use it.
 
 | Name | Purpose |
 |---|---|
-| `DATABASE_URL` | Neon connection string |
-| `SESSION_SECRET` | random string, 32 or more characters, used to sign login cookies |
-| `ADMIN_PASSWORD` | password for the first user, `admin`, created when the users table is empty |
+| `DATABASE_URL` | Neon connection string (required) |
+| `REQUIRE_LOGIN` | optional. Leave unset for open access. Set to `true` to require sign in |
+| `SESSION_SECRET` | only when `REQUIRE_LOGIN=true`. Random string, 32 or more characters, used to sign login cookies |
+| `ADMIN_PASSWORD` | only when `REQUIRE_LOGIN=true`. Password for the first user, `admin`, created when the users table is empty |
 
 Generate a secret with `openssl rand -base64 32`. After changing environment variables, redeploy.
+
+## Security
+
+With open access, anyone who knows the site address can read and change all the data. Keep the address private, or set `REQUIRE_LOGIN=true`.
 
 ## First run
 
