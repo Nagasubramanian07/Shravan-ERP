@@ -46,10 +46,10 @@
     D.co = D.co || { name: 'Shravan ERP', gstin: '', state: 'Tamil Nadu' };
     const add = (c, n, t) => { if (!D.gl.some((a) => a.c === c)) D.gl.push({ c, n, t }); };
     add(1300, 'Input CGST', 'Asset'); add(1310, 'Input SGST', 'Asset'); add(1320, 'Input IGST', 'Asset');
-    add(2200, 'Output CGST', 'Liability'); add(2210, 'Output SGST', 'Liability'); add(2220, 'Output IGST', 'Liability');
+    add(5300, 'Rounding differences', 'Expense'); add(5400, 'Freight and other charges', 'Expense'); add(2200, 'Output CGST', 'Liability'); add(2210, 'Output SGST', 'Liability'); add(2220, 'Output IGST', 'Liability');
     const m = D.map;
     m.icg = m.icg || 1300; m.isg = m.isg || 1310; m.iig = m.iig || 1320;
-    m.ocg = m.ocg || 2200; m.osg = m.osg || 2210; m.oig = m.oig || 2220;
+    m.rnd = m.rnd || 5300; m.frt = m.frt || 5400; m.ocg = m.ocg || 2200; m.osg = m.osg || 2210; m.oig = m.oig || 2220;
     [['RT', 'Return'], ['CM', 'A/R credit memo'], ['GT', 'Goods return'], ['PC', 'A/P credit memo']].forEach(([k, l]) => {
       if (!D.ser[k]) D.ser[k] = { p: k, n: 1, l };
     });
@@ -63,22 +63,31 @@
   }
   function intra(p) { const st = p && (p.bstate || p.sstate); return !st || st === db().co.state; }
   function calc(d) {
-    const ia = intra(partner(d.pid));
-    let sub = 0, tc = 0, ts = 0, ti = 0;
+    const ia = intra(partner(d.pid)), fd = +d.disc || 0;
+    let s0 = 0, lt = 0;
     d.lines.forEach((l) => {
       l.net = r2((+l.q || 0) * (+l.price || 0) * (1 - (+l.disc || 0) / 100));
-      l.tax = r2(l.net * (+l.rate || 0) / 100);
-      sub += l.net;
-      if (ia) { const h = r2(l.tax / 2); tc += h; ts += l.tax - h; } else ti += l.tax;
+      l.tax = r2(l.net * (1 - fd / 100) * (+l.rate || 0) / 100);
+      s0 += l.net; lt += l.tax;
     });
-    d.sub = r2(sub); d.tc = r2(tc); d.ts = r2(ts); d.ti = r2(ti);
-    d.total = r2(d.sub + d.tc + d.ts + d.ti);
-    d.intra = ia;
+    d.gross = r2(s0); d.discAmt = r2(s0 * fd / 100); d.sub = r2(s0 - d.discAmt);
+    d.freight = r2(+d.freight || 0);
+    const tax = r2(lt + d.freight * (+d.ftax || 0) / 100);
+    d.tc = 0; d.ts = 0; d.ti = 0;
+    if (ia) { d.tc = r2(tax / 2); d.ts = r2(tax - d.tc); } else d.ti = tax;
+    const pre = r2(d.sub + d.freight + tax);
+    d.rnd = d.roundOn ? r2(Math.round(pre) - pre) : 0;
+    d.total = r2(pre + d.rnd); d.intra = ia;
   }
   const taxRows = (d, sales) => {
     const m = db().map, k = sales ? ['ocg', 'osg', 'oig'] : ['icg', 'isg', 'iig'];
     return [[m[k[0]], d.tc], [m[k[1]], d.ts], [m[k[2]], d.ti]].filter((x) => x[1]);
   };
+  const INV = ['AR', 'CM', 'AI', 'PC'];
+  const addr = (p, k) => !p ? '' : (k === 'b' ? [p.bst != null ? p.bst : p.bill, p.bcity, p.bstate, p.bpin, p.bcountry] : [p.sst != null ? p.sst : p.ship, p.scity, p.sstate, p.spin, p.scountry]).filter(Boolean).join(', ');
+  const headFrom = (p) => ({ contact: (p && p.contact) || '', terms: (p && p.terms) || '', bill: addr(p, 'b'), ship: addr(p, 's') });
+  const DUE = { QT: 'Valid until', SO: 'Delivery date', DL: 'Delivery date', RT: 'Return date', PO: 'Delivery date', GP: 'Receipt date', GT: 'Return date' };
+  const dueLabel = (t) => DUE[t] || 'Due date';
 
   // ---- posting --------------------------------------------------------
   function postJ(d, src, rows) {
@@ -99,9 +108,13 @@
       if (!(+l.q > 0)) return `Line ${n}: quantity must be above zero.`;
       if (l.price === '' || !(+l.price >= 0)) return `Line ${n}: enter a unit price.`;
       if (!(+l.disc >= 0 && +l.disc <= 100)) return `Line ${n}: discount must be between 0 and 100.`;
+      if (!(+l.rate >= 0 && +l.rate <= 100)) return `Line ${n}: tax must be between 0 and 100.`;
       if (!D.wh.some((w) => w.id === +l.wh)) return `Line ${n}: choose a warehouse.`;
       if (base && l.bl != null && +l.q > base.lines[l.bl].open) return `Line ${n}: only ${base.lines[l.bl].open} left to copy from ${base.num}.`;
     }
+    const fd = +fm.disc || 0, inv = INV.includes(fm.t);
+    if (!(fd >= 0 && fd <= 100)) return 'Discount must be between 0 and 100.';
+    if (inv && (+fm.freight || 0) < 0) return 'Freight cannot be negative.';
     let dir = c.stock || 0;
     if (fm.t === 'AR' && !(base && base.t === 'DL')) dir = -1;
     if (fm.t === 'AI' && !(base && base.t === 'GP')) dir = 1;
@@ -114,35 +127,39 @@
         if ((it.wh[wh] || 0) < need[k]) return `Not enough stock of ${it.name} in that warehouse (${it.wh[wh] || 0} available).`;
       }
     }
+    const date = fm.date || today();
     const d = {
-      id: D.seq.dd++, t: fm.t, num: E.nextNo(fm.t), date: fm.date || today(), due: fm.due || fm.date || today(),
-      pid: p.id, status: 'Open', rem: fm.rem || '', paid: 0,
+      id: D.seq.dd++, t: fm.t, num: E.nextNo(fm.t), date, docDate: fm.docDate || date, due: fm.due || date,
+      pid: p.id, status: 'Open', paid: 0,
+      cref: fm.cref || '', contact: fm.contact || '', terms: fm.terms || '', emp: fm.emp || '',
+      bill: fm.bill || '', ship: fm.ship || '', rem: fm.rem || '', jrem: fm.jrem || '',
+      disc: fd, freight: inv ? +fm.freight || 0 : 0, ftax: inv ? +fm.ftax || 0 : 0, roundOn: inv && !!fm.roundOn,
       base: base ? { id: base.id, t: base.t, num: base.num } : null,
-      lines: fm.lines.map((l) => ({ iid: +l.iid, wh: +l.wh, q: +l.q, price: +l.price, disc: +l.disc || 0, rate: +l.rate || 0, open: +l.q, bl: l.bl == null ? null : l.bl })),
+      lines: fm.lines.map((l) => ({ iid: +l.iid, wh: +l.wh, q: +l.q, price: +l.price, disc: +l.disc || 0, rate: +l.rate || 0, desc: l.desc || '', uom: l.uom || '', open: +l.q, bl: l.bl == null ? null : l.bl })),
     };
     d.root = base ? base.root : d.num;
     calc(d);
-    const costOf = () => r2(d.lines.reduce((s, l) => s + l.q * E.cst(item(l.iid)), 0));
-    const m = D.map, cost = dir ? costOf() : 0, sales = c.s === 's';
+    const m = D.map, cost = dir ? r2(d.lines.reduce((s, l) => s + l.q * E.cst(item(l.iid)), 0)) : 0, sales = c.s === 's';
+    const rnd = d.rnd, fr = d.freight, cr = (x) => (x > 0 ? x : 0), dr = (x) => (x < 0 ? -x : 0);
     if (dir) d.lines.forEach((l) => E.mv(item(l.iid), l.wh, dir * l.q, c.n, d.num));
-    if (dir > 0 && !sales) d.lines.forEach((l) => { if (l.q > 0) item(l.iid).cost = r2(l.net / l.q); });
+    if (dir > 0 && !sales) d.lines.forEach((l) => { if (l.q > 0) item(l.iid).cost = r2(l.net * (1 - fd / 100) / l.q); });
     switch (fm.t) {
       case 'DL': postJ(d, 'Delivery', [[m.cogs, cost, 0], [m.inv, 0, cost]]); break;
       case 'RT': postJ(d, 'Return', [[m.inv, cost, 0], [m.cogs, 0, cost]]); break;
       case 'AR':
-        postJ(d, 'A/R invoice', [[m.ar, d.total, 0], [m.rev, 0, d.sub], ...taxRows(d, true).map((x) => [x[0], 0, x[1]])]);
+        postJ(d, 'A/R invoice', [[m.ar, d.total, 0], [m.rev, 0, d.sub + fr], ...taxRows(d, true).map((x) => [x[0], 0, x[1]]), [m.rnd, dr(rnd), cr(rnd)]]);
         if (dir < 0) postJ(d, 'Delivery with invoice', [[m.cogs, cost, 0], [m.inv, 0, cost]]);
         break;
       case 'CM':
-        postJ(d, 'A/R credit memo', [[m.rev, d.sub, 0], ...taxRows(d, true).map((x) => [x[0], x[1], 0]), [m.ar, 0, d.total]]);
+        postJ(d, 'A/R credit memo', [[m.rev, d.sub + fr, 0], ...taxRows(d, true).map((x) => [x[0], x[1], 0]), [m.rnd, cr(rnd), dr(rnd)], [m.ar, 0, d.total]]);
         if (dir > 0) postJ(d, 'Goods returned with credit memo', [[m.inv, cost, 0], [m.cogs, 0, cost]]);
         break;
       case 'GP': postJ(d, 'Goods receipt PO', [[m.inv, d.sub, 0], [m.grir, 0, d.sub]]); break;
       case 'GT': postJ(d, 'Goods return', [[m.grir, d.sub, 0], [m.inv, 0, d.sub]]); break;
       case 'AI':
-        postJ(d, 'A/P invoice', [[dir > 0 ? m.inv : m.grir, d.sub, 0], ...taxRows(d, false).map((x) => [x[0], x[1], 0]), [m.ap, 0, d.total]]);
+        postJ(d, 'A/P invoice', [[dir > 0 ? m.inv : m.grir, d.sub, 0], [m.frt, fr, 0], ...taxRows(d, false).map((x) => [x[0], x[1], 0]), [m.rnd, cr(rnd), dr(rnd)], [m.ap, 0, d.total]]);
         break;
-      case 'PC': postJ(d, 'A/P credit memo', [[m.ap, d.total, 0], [m.grir, 0, d.sub], ...taxRows(d, false).map((x) => [x[0], 0, x[1]])]); break;
+      case 'PC': postJ(d, 'A/P credit memo', [[m.ap, d.total, 0], [m.grir, 0, d.sub], [m.frt, 0, fr], ...taxRows(d, false).map((x) => [x[0], 0, x[1]]), [m.rnd, dr(rnd), cr(rnd)]]); break;
       default: break;
     }
     if (base) {
@@ -231,67 +248,91 @@
   Object.keys(TY).forEach((k) => { R[k.toLowerCase()] = () => listScreen(k); T[k.toLowerCase()] = LISTS[k]; });
 
   // ---- document form --------------------------------------------------
+  const needMaster = (k) => {
+    const want = sideOf(k) === 's' ? 'customer' : 'supplier', D = db();
+    if (!D.partners.some((x) => x.type === (want === 'customer' ? 'Customer' : 'Supplier') && x.active !== false)) return `Add a ${want} under Business partner master data first.`;
+    if (!D.items.length) return 'Add an item under Item master data first.';
+    return '';
+  };
   function blankLine(t) {
     const it = db().items[0]; if (!it) return null;
-    return { iid: it.id, wh: it.dwh || 1, q: 1, price: sideOf(t) === 's' ? it.price : E.cst(it), disc: 0, rate: itemRate(it), bl: null };
+    return { iid: it.id, wh: it.dwh || 1, q: 1, price: sideOf(t) === 's' ? it.price : E.cst(it), disc: 0, rate: itemRate(it), desc: it.name, uom: it.uom || '', bl: null };
   }
   function startNew(k) {
-    const side = sideOf(k), want = side === 's' ? 'Customer' : 'Supplier';
-    const p = db().partners.find((x) => x.type === want && x.active !== false);
-    const date = today();
-    FM = { t: k, pid: p ? p.id : 0, date, due: addDays(date, termDays(p)), rem: '', lines: [blankLine(k)].filter(Boolean), base: null, pick: '' };
+    const msg = needMaster(k); if (msg) { FL = msg; E.route(); return; }
+    const want = sideOf(k) === 's' ? 'Customer' : 'Supplier';
+    const p = db().partners.find((x) => x.type === want && x.active !== false), date = today();
+    FM = { t: k, pid: p.id, date, docDate: date, due: addDays(date, termDays(p)), cref: '', emp: '', rem: '', jrem: '', disc: 0, freight: 0, ftax: 0, roundOn: false, ...headFrom(p), lines: [blankLine(k)], base: null, pick: '' };
     location.hash = 'dform';
   }
   function copyFrom(k, baseId) {
-    const b = db().docs.find((x) => x.id === baseId);
-    FM = { t: k, pid: b.pid, date: today(), due: addDays(today(), termDays(partner(b.pid))), rem: '', base: { id: b.id, t: b.t, num: b.num }, pick: '',
-      lines: b.lines.map((l, i) => ({ iid: l.iid, wh: l.wh, q: l.open, price: l.price, disc: l.disc, rate: l.rate, bl: i })).filter((l) => l.q > 0) };
+    const b = db().docs.find((x) => x.id === baseId), p = partner(b.pid), date = today();
+    FM = { t: k, pid: b.pid, date, docDate: date, due: addDays(date, termDays(p)), cref: b.cref || '', emp: b.emp || '', rem: '', jrem: '', disc: b.disc || 0, freight: 0, ftax: 0, roundOn: false,
+      contact: b.contact || '', terms: b.terms || '', bill: b.bill || '', ship: b.ship || '',
+      base: { id: b.id, t: b.t, num: b.num }, pick: '',
+      lines: b.lines.map((l, i) => ({ iid: l.iid, wh: l.wh, q: l.open, price: l.price, disc: l.disc, rate: l.rate, desc: l.desc || '', uom: l.uom || '', bl: i })).filter((l) => l.q > 0) };
     location.hash = 'dform';
   }
-  function totalsHtml(d) {
-    return `<tr><th>Subtotal</th><td class='r' id='ft-sub'>${money(d.sub)}</td></tr>` +
-      (d.intra ? `<tr><th>CGST</th><td class='r' id='ft-c'>${money(d.tc)}</td></tr><tr><th>SGST</th><td class='r' id='ft-s'>${money(d.ts)}</td></tr>` : `<tr><th>IGST</th><td class='r' id='ft-i'>${money(d.ti)}</td></tr>`) +
-      `<tr><th>Total</th><td class='r' id='ft-t'><b>${money(d.total)}</b></td></tr>`;
+  function totalsHtml(d, idp) {
+    const g = d.gross == null ? d.sub : d.gross;
+    const row = (k, v, id, b) => `<tr><th>${k}</th><td class='r'${id ? ` id='${id}'` : ''}>${b ? '<b>' : ''}${money(v)}${b ? '</b>' : ''}</td></tr>`;
+    return row('Total before discount', g, idp && 'ft-gross') +
+      (d.disc ? row(`Discount ${d.disc}%`, -(d.discAmt || 0), idp && 'ft-disc') : '') +
+      (d.freight ? row('Freight', d.freight, idp && 'ft-fr') : '') +
+      (d.intra ? row('CGST', d.tc, idp && 'ft-c') + row('SGST', d.ts, idp && 'ft-s') : row('IGST', d.ti, idp && 'ft-i')) +
+      (d.roundOn ? row('Rounding', d.rnd, idp && 'ft-rnd') : '') + row('Total payment due', d.total, idp && 'ft-t', true);
   }
+  const tmpOf = () => { const t = { pid: FM.pid, disc: FM.disc, freight: FM.freight, ftax: FM.ftax, roundOn: FM.roundOn, lines: FM.lines.map((l) => ({ ...l })) }; calc(t); return t; };
   function formScreen() {
     if (!FM) return `<div class='box'><div class='pad'>Open a list and click New to start a document.</div></div>`;
-    const c = TY[FM.t], D = db(), side = c.s;
+    const c = TY[FM.t], D = db(), side = c.s, inv = INV.includes(FM.t);
     const parts = D.partners.filter((p) => p.type === (side === 's' ? 'Customer' : 'Supplier') && p.active !== false);
     const eligible = D.docs.filter((d) => d.pid === FM.pid && c.base.includes(d.t) && d.status === 'Open' && d.lines.some((l) => l.open > 0));
-    const tmp = { pid: FM.pid, lines: FM.lines.map((l) => ({ ...l })) }; calc(tmp);
+    const tmp = tmpOf();
+    const I = (f, label, type, extra) => `<label>${label}<input data-fl='h:${f}' ${type ? `type='${type}'` : ''} value='${esc(FM[f] == null ? '' : FM[f])}' ${extra || ''}></label>`;
     const wo = (sel) => D.wh.map((w) => `<option value='${w.id}'${w.id === +sel ? ' selected' : ''}>${esc(w.code)}</option>`).join('');
     const io = (sel) => D.items.map((i) => `<option value='${i.id}'${i.id === +sel ? ' selected' : ''}>${esc(i.code + ' ' + i.name)}</option>`).join('');
     const lines = FM.lines.map((l, i) => `<tr>
+      <td>${i + 1}</td>
       <td><select data-fc='${i}:iid' aria-label='Item'>${io(l.iid)}</select></td>
+      <td><input data-fl='${i}:desc' value='${esc(l.desc || '')}' style='width:160px' aria-label='Item description'></td>
       <td><select data-fc='${i}:wh' aria-label='Warehouse'>${wo(l.wh)}</select></td>
       <td><input data-fl='${i}:q' type='number' min='0' step='any' value='${l.q}' style='width:80px' aria-label='Quantity'></td>
-      <td><input data-fl='${i}:price' type='number' min='0' step='0.01' value='${l.price}' style='width:110px' aria-label='Unit price'></td>
-      <td><input data-fl='${i}:disc' type='number' min='0' max='100' step='0.01' value='${l.disc}' style='width:70px' aria-label='Discount percent'></td>
-      <td class='r'>${l.rate}%</td>
-      <td class='r' id='fl-${i}'>${money(tmp.lines[i].net + tmp.lines[i].tax)}</td>
+      <td>${esc(l.uom || '')}</td>
+      <td><input data-fl='${i}:price' type='number' min='0' step='0.01' value='${l.price}' style='width:105px' aria-label='Unit price'></td>
+      <td><input data-fl='${i}:disc' type='number' min='0' max='100' step='0.01' value='${l.disc}' style='width:65px' aria-label='Discount percent'></td>
+      <td><input data-fl='${i}:rate' type='number' min='0' max='100' step='0.01' value='${l.rate}' style='width:65px' aria-label='Tax percent'></td>
+      <td class='r' id='fl-${i}'>${money(tmp.lines[i].net)}</td>
       <td>${FM.base ? '' : `<button data-frm='${i}' aria-label='Remove line'>×</button>`}</td></tr>`).join('');
     const retBox = FM.t === 'CM' && FM.base && FM.base.t === 'AR' ? `<p><label><input type='checkbox' data-fl='h:retStock'${FM.retStock ? ' checked' : ''}> Return the goods to stock</label></p>` : '';
     const copy = FM.base ? `<p class='meta'>Copied from ${esc(FM.base.num)}. Lower a quantity to copy only part of it.</p>${retBox}` :
       (c.base.length ? `<div class='form'><label>Copy from an open document<select data-fc='h:pick'><option value=''>Choose</option>${eligible.map((d) => `<option value='${d.id}'${String(d.id) === String(FM.pick) ? ' selected' : ''}>${esc(d.num)} (${money(d.total)})</option>`).join('')}</select></label><button data-fcopy='1'>Copy lines</button></div>` : '');
+    const terms = ['Immediate', 'Net 15', 'Net 30', 'Net 60'];
     return `<div class='box'><h3>New ${esc(c.n.toLowerCase())}</h3><div class='pad'>
-      <div class='form'>
+      <h4 class='hd'>General</h4><div class='form'>
         <label>${side === 's' ? 'Customer' : 'Supplier'}<select data-fc='h:pid' ${FM.base ? 'disabled' : ''}>${parts.map((p) => `<option value='${p.id}'${p.id === FM.pid ? ' selected' : ''}>${esc(p.code + ' ' + p.name)}</option>`).join('')}</select></label>
-        <label>Posting date<input data-fl='h:date' type='date' value='${FM.date}'></label>
-        <label>Due date<input data-fl='h:due' type='date' value='${FM.due}'></label>
-        <label>Remarks<input data-fl='h:rem' value='${esc(FM.rem)}'></label>
-      </div>${copy}
-      <div class='wrap'><table><thead><tr><th>Item</th><th>Warehouse</th><th>Quantity</th><th>Unit price</th><th>Disc %</th><th class='r'>Tax</th><th class='r'>Line total</th><th></th></tr></thead><tbody>${lines}</tbody></table></div>
+        ${I('contact', 'Contact person')}${I('cref', side === 's' ? 'Customer ref. no.' : 'Vendor ref. no.')}
+        <label>Currency<input value='INR' readonly tabindex='-1' style='width:70px'></label>
+        ${I('date', 'Posting date', 'date')}${I('docDate', 'Document date', 'date')}${I('due', dueLabel(FM.t), 'date')}
+        <label>Payment terms<select data-fc='h:terms'><option value=''>-</option>${terms.map((x) => `<option${x === FM.terms ? ' selected' : ''}>${x}</option>`).join('')}</select></label>
+      </div>
+      <h4 class='hd'>Addresses</h4><div class='form'>${I('bill', 'Bill-to / pay-to address', '', "style='width:280px'")}${I('ship', 'Ship-to address', '', "style='width:280px'")}</div>${copy}
+      <h4 class='hd'>Contents</h4><div class='wrap'><table><thead><tr><th>#</th><th>Item no.</th><th>Description</th><th>Whse</th><th>Quantity</th><th>UoM</th><th>Unit price</th><th>Disc %</th><th>Tax %</th><th class='r'>Total</th><th></th></tr></thead><tbody>${lines}</tbody></table></div>
       ${FM.base ? '' : `<p><button data-fadd='1'>Add line</button></p>`}
-      <div class='wrap'><table style='min-width:0;max-width:340px;margin-left:auto'>${totalsHtml(tmp)}</table></div>
-      <p class='meta'>${tmp.intra ? 'Same state as your company: CGST and SGST apply.' : 'Different state: IGST applies.'} GST rates come from the item HSN/SAC code.</p>
+      <h4 class='hd'>Logistics and accounting</h4><div class='form'>
+        ${I('emp', side === 's' ? 'Sales employee' : 'Buyer')}${I('rem', 'Remarks', '', "style='width:240px'")}${I('jrem', 'Journal remarks', '', "style='width:240px'")}
+        ${I('disc', 'Discount % (whole document)', 'number', "min='0' max='100' step='0.01' style='width:90px'")}
+        ${inv ? I('freight', 'Freight', 'number', "min='0' step='0.01' style='width:100px'") + I('ftax', 'Freight tax %', 'number', "min='0' max='100' step='0.01' style='width:80px'") + `<label>Rounding<input type='checkbox' data-fl='h:roundOn'${FM.roundOn ? ' checked' : ''}></label>` : ''}
+      </div>
+      <div class='wrap'><table id='ft' style='min-width:0;max-width:360px;margin-left:auto'>${totalsHtml(tmp, true)}</table></div>
+      <p class='meta'>${tmp.intra ? 'Same state as your company: CGST and SGST apply.' : 'Different state: IGST applies.'} Tax % per line comes from the item HSN/SAC code and can be changed.</p>
       <p><button class='p' data-fsave='1'>Add document</button> <button data-fcancel='1'>Cancel</button></p><div class='msg' id='msg'></div></div></div>`;
   }
   R.dform = formScreen; T.dform = 'New document';
   function refreshTotals() {
-    const tmp = { pid: FM.pid, lines: FM.lines.map((l) => ({ ...l })) }; calc(tmp);
-    tmp.lines.forEach((l, i) => { const e = $('fl-' + i); if (e) e.textContent = money(l.net + l.tax); });
-    const set = (id, v) => { const e = $(id); if (e) e.textContent = money(v); };
-    set('ft-sub', tmp.sub); set('ft-c', tmp.tc); set('ft-s', tmp.ts); set('ft-i', tmp.ti); set('ft-t', tmp.total);
+    const tmp = tmpOf();
+    tmp.lines.forEach((l, i) => { const e = $('fl-' + i); if (e) e.textContent = money(l.net); });
+    const ft = $('ft'); if (ft) ft.innerHTML = totalsHtml(tmp, true);
   }
 
   // ---- details screen -------------------------------------------------
@@ -304,13 +345,13 @@
     const open = d.status === 'Open';
     const btns = (open ? c.to.map((k) => `<button class='p' data-copyto='${k}:${d.id}'>Copy to ${esc(TY[k].n.toLowerCase())}</button>`).join(' ') : '') +
       (d.status !== 'Cancelled' ? ` <button class='x' data-cancel-doc='${d.id}'>Cancel document</button>` : '') + ` <button data-print='1'>Print</button> ${back}`;
-    const items = d.lines.map((l, i) => { const it = item(l.iid), w = D.wh.find((x) => x.id === l.wh); return `<tr><td>${i + 1}</td><td>${esc(it ? it.code + ' ' + it.name : 'Deleted item')}</td><td>${esc(it && it.hsn ? it.hsn : '')}</td><td>${esc(w ? w.code : '')}</td><td class='r'>${l.q}</td><td class='r'>${l.open}</td><td class='r'>${money(l.price)}</td><td class='r'>${l.disc}%</td><td class='r'>${money(l.net)}</td><td class='r'>${l.rate}%</td><td class='r'>${money(l.net + l.tax)}</td></tr>`; });
+    const items = d.lines.map((l, i) => { const it = item(l.iid), w = D.wh.find((x) => x.id === l.wh); return `<tr><td>${i + 1}</td><td>${esc(it ? it.code : 'Deleted item')}</td><td>${esc(l.desc || (it ? it.name : ''))}</td><td>${esc(it && it.hsn ? it.hsn : '')}</td><td>${esc(w ? w.code : '')}</td><td class='r'>${l.q}</td><td>${esc(l.uom || '')}</td><td class='r'>${l.open}</td><td class='r'>${money(l.price)}</td><td class='r'>${l.disc}%</td><td class='r'>${money(l.net)}</td><td class='r'>${l.rate}%</td><td class='r'>${money(l.net + l.tax)}</td></tr>`; });
     const je = []; D.je.filter((j) => j.doc === d.num || j.doc === d.num + ' (cancel)').forEach((j) => j.lines.forEach((l, k) => je.push(`<tr><td>${k ? '' : 'JE-' + j.id}</td><td>${k ? '' : esc(j.src)}</td><td>${k ? '' : j.date}</td><td>${esc(E.acn(l.a))}</td><td class='r'>${l.dr ? money(l.dr) : ''}</td><td class='r'>${l.cr ? money(l.cr) : ''}</td></tr>`)));
     const mv = D.mv.filter((v) => v.r === d.num || v.r === d.num + ' (cancel)').map((v) => { const it = item(v.i), w = D.wh.find((x) => x.id === v.w); return `<tr><td>${esc(it ? it.name : '')}</td><td>${esc(w ? w.code : '')}</td><td class='r'>${v.q > 0 ? '+' : ''}${v.q}</td><td>${esc(v.r)}</td></tr>`; });
     const pays = D.pays.filter((y) => y.allocs.some((a) => a.id === d.id)).map((y) => `<tr><td><button class='link' style='color:var(--acc)!important;font-weight:700' data-dd='y:${y.id}'>${esc(y.num)}</button></td><td>${y.date}</td><td class='r'>${money(y.allocs.find((a) => a.id === d.id).amt)}</td><td>${y.status}</td></tr>`);
     return flash() + `<div class='box'><h3>${esc(c.n)} ${esc(d.num)}</h3><div class='pad'>${btns}</div><div class='msg' id='msg'></div></div>` +
-      `<div class='box'><h3>Header</h3><div class='wrap'><table style='min-width:0'>${row('Status', d.status)}${row(sales ? 'Customer' : 'Supplier', p ? esc(p.code + ' ' + p.name) : 'Deleted partner')}${row('GSTIN', p ? esc(p.gstin || '') : '')}${row('Posting date', d.date)}${row('Due date', d.due)}${row('Place of supply', d.intra ? 'Same state: CGST and SGST' : 'Other state: IGST')}${row('Based on', d.base ? `<button class='link' style='color:var(--acc)!important' data-dd='d:${d.base.id}'>${esc(d.base.num)}</button>` : '')}${row('Flow reference', esc(d.root))}${row('Remarks', esc(d.rem))}${d.t === 'AR' || d.t === 'AI' || d.t === 'CM' || d.t === 'PC' ? row('Paid or applied', money(d.paid || 0)) + row('Balance', money(balance(d))) : ''}</table></div></div>` +
-      `<div class='box'><h3>Items</h3>` + table([{ h: '#' }, { h: 'Item' }, { h: 'HSN/SAC' }, { h: 'Whse' }, { h: 'Qty', r: 1 }, { h: 'Open qty', r: 1 }, { h: 'Unit price', r: 1 }, { h: 'Disc', r: 1 }, { h: 'Net', r: 1 }, { h: 'Tax', r: 1 }, { h: 'Line total', r: 1 }], items) +
+      `<div class='box'><h3>Header</h3><div class='wrap'><table style='min-width:0'>${row('Status', d.status)}${row(sales ? 'Customer' : 'Supplier', p ? esc(p.code + ' ' + p.name) : 'Deleted partner')}${row('GSTIN', p ? esc(p.gstin || '') : '')}${row('Contact person', esc(d.contact))}${row(sales ? 'Customer ref. no.' : 'Vendor ref. no.', esc(d.cref))}${row('Currency', 'INR')}${row('Posting date', d.date)}${row('Document date', d.docDate || d.date)}${row(dueLabel(d.t), d.due)}${row('Payment terms', esc(d.terms))}${row(sales ? 'Sales employee' : 'Buyer', esc(d.emp))}${row('Bill-to address', esc(d.bill))}${row('Ship-to address', esc(d.ship))}${row('Place of supply', d.intra ? 'Same state: CGST and SGST' : 'Other state: IGST')}${row('Based on', d.base ? `<button class='link' style='color:var(--acc)!important' data-dd='d:${d.base.id}'>${esc(d.base.num)}</button>` : '')}${row('Flow reference', esc(d.root))}${row('Remarks', esc(d.rem))}${row('Journal remarks', esc(d.jrem))}${d.t === 'AR' || d.t === 'AI' || d.t === 'CM' || d.t === 'PC' ? row('Paid or applied', money(d.paid || 0)) + row('Balance', money(balance(d))) : ''}</table></div></div>` +
+      `<div class='box'><h3>Items</h3>` + table([{ h: '#' }, { h: 'Item no.' }, { h: 'Description' }, { h: 'HSN/SAC' }, { h: 'Whse' }, { h: 'Qty', r: 1 }, { h: 'UoM' }, { h: 'Open qty', r: 1 }, { h: 'Unit price', r: 1 }, { h: 'Disc', r: 1 }, { h: 'Net', r: 1 }, { h: 'Tax', r: 1 }, { h: 'Line total', r: 1 }], items) +
       `<div class='wrap'><table style='min-width:0;max-width:340px;margin-left:auto'>${totalsHtml(d)}</table></div></div>` +
       `<div class='box'><h3>Documents created from this one</h3>` + table([{ h: 'Document no.' }, { h: 'Type' }, { h: 'Date' }, { h: 'Total', r: 1 }, { h: 'Status' }], targets.map((x) => `<tr><td>${link(x)}</td><td>${esc(TY[x.t].n)}</td><td>${x.date}</td><td class='r'>${money(x.total)}</td><td>${x.status}</td></tr>`)) + '</div>' +
       (pays.length ? `<div class='box'><h3>Payments</h3>` + table([{ h: 'Payment' }, { h: 'Date' }, { h: 'Applied', r: 1 }, { h: 'Status' }], pays) + '</div>' : '') +
@@ -485,10 +526,10 @@
     if (FM && ds.fc) {
       const [i, f] = ds.fc.split(':');
       if (i === 'h') {
-        if (f === 'pid') { FM.pid = +t.value; FM.due = addDays(FM.date, termDays(partner(FM.pid))); FM.pick = ''; FM.lines.forEach((l) => { l.bl = null; }); } else FM[f] = t.value;
+        if (f === 'pid') { FM.pid = +t.value; FM.due = addDays(FM.date, termDays(partner(FM.pid))); FM.pick = ''; Object.assign(FM, headFrom(partner(FM.pid))); FM.lines.forEach((l) => { l.bl = null; }); } else FM[f] = t.value;
       } else {
         const l = FM.lines[+i];
-        if (f === 'iid') { const it = item(+t.value); l.iid = it.id; l.wh = it.dwh || 1; l.price = sideOf(FM.t) === 's' ? it.price : E.cst(it); l.rate = itemRate(it); } else l[f] = +t.value;
+        if (f === 'iid') { const it = item(+t.value); l.iid = it.id; l.wh = it.dwh || 1; l.price = sideOf(FM.t) === 's' ? it.price : E.cst(it); l.rate = itemRate(it); l.desc = it.name; l.uom = it.uom || ''; } else l[f] = +t.value;
       }
       E.route();
     }
@@ -496,5 +537,5 @@
     if (PF && ds.pf) PF[ds.pf] = t.value;
   });
 
-  E.docs = { TY, create, cancel, createPay, cancelPay, calc, balance };
+  E.docs = { TY, create, cancel, createPay, cancelPay, calc, balance, startNew, copyFrom };
 })();

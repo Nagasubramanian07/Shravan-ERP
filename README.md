@@ -8,7 +8,10 @@ A web ERP inspired by SAP Business One. The front end is plain HTML, CSS and Jav
 
 **Sales (A/R), same document chain as SAP Business One:** sales quotation, sales order, delivery, return, A/R invoice, A/R credit memo, incoming payment.
 **Purchasing (A/P):** purchase order, goods receipt PO, goods return, A/P invoice, A/P credit memo, outgoing payment.
-- Multi-line documents with a warehouse, quantity, unit price, discount and GST on every line
+- SAP B1 document fields: contact person, customer or vendor reference no., posting date, document date, delivery or due date, payment terms, sales employee or buyer, bill-to and ship-to address, remarks and journal remarks
+- Multi-line documents with item no., description, warehouse, quantity, UoM, unit price, discount, tax % and total on every line
+- Footer: total before discount, discount %, freight with its own tax, GST, automatic rounding and total payment due
+- Freight and rounding post to their own accounts (Freight and other charges, Rounding differences)
 - Copy To: each document is created from the previous one, with partial quantities. The open quantity on the base document falls and it closes when nothing is left
 - GST: CGST and SGST when the partner is in the company's state, IGST otherwise. The rate comes from the item's HSN/SAC code
 - Each document posts its own journal entry. A direct invoice also moves stock
@@ -52,6 +55,12 @@ Generate a secret with `openssl rand -base64 32`. After changing environment var
 ## Security
 
 With open access, anyone who knows the site address can read and change all the data. Keep the address private, or set `REQUIRE_LOGIN=true`.
+
+## Starting fresh
+
+A new installation starts empty: no sample partners, items or documents. It contains only the chart of accounts, the account mapping, currencies, number series and one warehouse (WH01). Add your business partners, items and HSN/SAC codes first, then create documents.
+
+To erase everything on an existing installation, click **Clear all data** at the top of the app and type DELETE. This removes the data for everyone.
 
 ## First run
 
